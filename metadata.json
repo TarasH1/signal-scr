@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Signal Screenshotter",
+  "description": "Capture your screen with a customizable timeout and send it to Signal groups via a bridge service.",
+  "requestFramePermissions": [
+    "display-capture"
+  ],
+  "majorCapabilities": []
+}

@@ -1,0 +1,32 @@
+services:
+  signal-screenshotter:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: signal-screenshotter
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # You can provide these in a .env file locally
+      - SIGNAL_BRIDGE_URL=${SIGNAL_BRIDGE_URL:-http://signal-bridge:8080}
+      - SIGNAL_ACCOUNT=${SIGNAL_ACCOUNT}
+      - SIGNAL_RECIPIENT=${SIGNAL_RECIPIENT}
+    restart: unless-stopped
+    depends_on:
+      - signal-bridge
+
+  # Optional: Example of running the signal bridge alongside
+  signal-bridge:
+    image: bbernhard/signal-cli-rest-api:latest
+    container_name: signal-bridge
+    environment:
+      - MODE=normal # or json-rpc
+    volumes:
+      - signal-data:/home/signal-cli-config
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  signal-data:

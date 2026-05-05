@@ -81,6 +81,8 @@ async function startServer() {
         persistent: true,
         ignoreInitial: true,
         depth: 0,
+        usePolling: true,
+        interval: 1000,
         awaitWriteFinish: {
           stabilityThreshold: 2000,
           pollInterval: 100

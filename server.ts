@@ -2,58 +2,116 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
+import chokidar from 'chokidar';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+let currentWatcher: chokidar.FSWatcher | null = null;
+let watcherStatus: 'idle' | 'running' | 'error' = 'idle';
+let watcherLogs: { time: string; type: 'info' | 'send' | 'error'; msg: string }[] = [];
+
+function addLog(type: 'info' | 'send' | 'error', msg: string) {
+  const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+  watcherLogs = [{ time, type, msg }, ...watcherLogs].slice(0, 50);
+}
+
+async function handleFile(filePath: string, bridgeUrl: string, account: string, recipient: string) {
+  if (!filePath.match(/\.(png|jpe?g|gif|webp|bmp)$/i)) return;
+  addLog('info', `Detected image update: ${path.basename(filePath)}`);
+  
+  try {
+    const fileData = fs.readFileSync(filePath);
+    const base64Data = fileData.toString('base64');
+
+    const signalResponse = await fetch(`${bridgeUrl}/v2/send`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        account: account,
+        recipients: [recipient],
+        base64_attachments: [base64Data],
+        message: `File updated: ${path.basename(filePath)} at ${new Date().toLocaleString()}`,
+      }),
+    });
+
+    if (!signalResponse.ok) {
+      const errorText = await signalResponse.text();
+      addLog('error', `Signal Bridge Error: ${errorText}`);
+    } else {
+      addLog('send', `Transmitted successfully to: ${recipient}`);
+    }
+  } catch (err: any) {
+    console.error('Signal send failed:', err);
+    addLog('error', `Transmission failed: ${err.message}`);
+  }
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '50mb' }));
 
-  // API Route to send to Signal
-  app.post('/api/send-signal', async (req, res) => {
-    const { image, bridgeUrl, account, recipient } = req.body;
+  app.post('/api/start-watcher', async (req, res) => {
+    const { folderPath, bridgeUrl, account, recipient } = req.body;
 
-    if (!image || !bridgeUrl || !account || !recipient) {
+    if (!folderPath || !bridgeUrl || !account || !recipient) {
       return res.status(400).json({ error: 'Missing required parameters' });
     }
 
     try {
-      // image is base64: data:image/png;base64,...
-      const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-      const buffer = Buffer.from(base64Data, 'base64');
-
-      // Note: signal-cli-rest-api usually expects a POST to /v2/send
-      // We will proxy this.
-      // For images, it often expects base64 attachments in the body or multipart.
-      // Assuming version 2 of the API: https://bbernhard.github.io/signal-cli-rest-api/
+      if (!fs.existsSync(folderPath)) {
+        return res.status(400).json({ error: 'Directory does not exist on the server filesystem' });
+      }
       
-      const signalResponse = await fetch(`${bridgeUrl}/v2/send`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          account: account,
-          recipients: [recipient],
-          base64_attachments: [base64Data],
-          message: `Screenshot captured at ${new Date().toLocaleString()}`,
-        }),
-      });
-
-      if (!signalResponse.ok) {
-        const errorText = await signalResponse.text();
-        throw new Error(`Signal bridge error: ${errorText}`);
+      const stats = fs.statSync(folderPath);
+      if (!stats.isDirectory()) {
+         return res.status(400).json({ error: 'The provided path is not a directory' });
       }
 
-      const result = await signalResponse.json();
-      res.json({ success: true, result });
+      if (currentWatcher) {
+        await currentWatcher.close();
+      }
+
+      currentWatcher = chokidar.watch(folderPath, {
+        persistent: true,
+        ignoreInitial: true,
+        depth: 0,
+        awaitWriteFinish: {
+          stabilityThreshold: 2000,
+          pollInterval: 100
+        }
+      });
+
+      currentWatcher.on('add', (filePath) => handleFile(filePath, bridgeUrl, account, recipient));
+      currentWatcher.on('change', (filePath) => handleFile(filePath, bridgeUrl, account, recipient));
+      currentWatcher.on('error', (error) => addLog('error', `Watcher error: ${error}`));
+
+      watcherStatus = 'running';
+      addLog('info', `Started monitoring: ${folderPath}`);
+      res.json({ success: true });
     } catch (err: any) {
-      console.error('Signal send failed:', err);
+      addLog('error', `Failed to start watcher: ${err.message}`);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  app.post('/api/stop-watcher', async (req, res) => {
+    if (currentWatcher) {
+      await currentWatcher.close();
+      currentWatcher = null;
+    }
+    watcherStatus = 'idle';
+    addLog('info', 'Monitoring paused');
+    res.json({ success: true });
+  });
+
+  app.get('/api/watcher-status', (req, res) => {
+    res.json({ status: watcherStatus, logs: watcherLogs });
   });
 
   // Vite middleware for development

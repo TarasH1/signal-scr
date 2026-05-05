@@ -34,7 +34,6 @@ async function handleFile(filePath: string, bridgeUrl: string, account: string, 
         number: account,
         recipients: [recipient],
         base64_attachments: [base64Data],
-        message: `File updated: ${path.basename(filePath)} at ${new Date().toLocaleString()}`,
       }),
     });
 

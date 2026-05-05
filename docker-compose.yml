@@ -12,6 +12,8 @@ services:
       - SIGNAL_BRIDGE_URL=${SIGNAL_BRIDGE_URL:-http://signal-bridge:8080}
       - SIGNAL_ACCOUNT=${SIGNAL_ACCOUNT}
       - SIGNAL_RECIPIENT=${SIGNAL_RECIPIENT}
+    volumes:
+      - ./screenshots:/app/screenshots # Map your host folder here
     restart: unless-stopped
     depends_on:
       - signal-bridge
